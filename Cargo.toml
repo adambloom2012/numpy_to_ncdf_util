@@ -1,0 +1,26 @@
+[package]
+name = "npy2nc"
+version = "0.1.0"
+edition = "2021"
+description = "Config-driven converter from NumPy .npy files to georeferenced NetCDF"
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+ndarray = "0.15"
+netcdf = "0.10"
+rayon = "1"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[features]
+# Build libnetcdf/HDF5 from source instead of linking the system copy
+# (needs cmake + a C compiler):  cargo build --release --features static
+static = ["netcdf/static"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
