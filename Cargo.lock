@@ -491,6 +491,7 @@ dependencies = [
  "clap",
  "ndarray 0.15.6",
  "netcdf",
+ "parking_lot",
  "rayon",
  "regex",
  "serde",

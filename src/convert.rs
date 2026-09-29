@@ -5,10 +5,21 @@ use crate::npy::{self, Elem};
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::NaiveDate;
 use ndarray::{ArrayD, Axis, IxDyn};
+use parking_lot::ReentrantMutex;
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+/// libnetcdf/HDF5 are not safe to call from multiple threads at once, even
+/// though the `netcdf` crate's own internal locking suggests otherwise (see
+/// https://github.com/georust/netcdf/issues/43). `.npy` decoding runs freely
+/// in parallel across samples (that's where the real CPU cost is - see
+/// README), but every call into the netcdf/HDF5 libraries - opening the
+/// template, creating a file, writing a variable - is funneled through this
+/// single process-wide lock. It's reentrant so `write()` can hold it across
+/// its call into `TemplateCache::get()` without deadlocking.
+static NC_LOCK: ReentrantMutex<()> = ReentrantMutex::new(());
 
 // ───────────────────────── helpers ─────────────────────────
 
@@ -55,21 +66,38 @@ pub fn discover(cfg: &Config, only: Option<&Regex>) -> Result<Vec<String>> {
 
 pub fn make_sample(cfg: &Config, stem: &str, date_re: Option<&Regex>) -> Result<Sample> {
     let Some(t) = &cfg.time else {
-        return Ok(Sample { stem: stem.into(), date_str: String::new(), date: None });
+        return Ok(Sample {
+            stem: stem.into(),
+            date_str: String::new(),
+            date: None,
+        });
     };
     if let Some(re) = date_re {
         let caps = re
             .captures(stem)
             .ok_or_else(|| anyhow!("date_regex did not match stem '{stem}'"))?;
-        let m = caps.get(1).or_else(|| caps.get(0)).unwrap().as_str().to_string();
+        let m = caps
+            .get(1)
+            .or_else(|| caps.get(0))
+            .unwrap()
+            .as_str()
+            .to_string();
         let d = NaiveDate::parse_from_str(&m, &t.date_format)
             .with_context(|| format!("parsing date '{m}' with '{}'", t.date_format))?;
-        Ok(Sample { stem: stem.into(), date_str: m, date: Some(d) })
+        Ok(Sample {
+            stem: stem.into(),
+            date_str: m,
+            date: Some(d),
+        })
     } else {
         let s = t.start.as_ref().unwrap();
         let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
             .with_context(|| format!("time.start '{s}' must be YYYY-MM-DD"))?;
-        Ok(Sample { stem: stem.into(), date_str: s.replace('-', ""), date: Some(d) })
+        Ok(Sample {
+            stem: stem.into(),
+            date_str: s.replace('-', ""),
+            date: Some(d),
+        })
     }
 }
 
@@ -106,12 +134,20 @@ fn build<T: Elem>(
 
     for s in &v.select {
         if s.axis >= arr.ndim() {
-            bail!("select axis {} out of range for shape {:?}", s.axis, arr.shape());
+            bail!(
+                "select axis {} out of range for shape {:?}",
+                s.axis,
+                arr.shape()
+            );
         }
         let len = arr.shape()[s.axis] as i64;
         let idx = if s.index < 0 { len + s.index } else { s.index };
         if idx < 0 || idx >= len {
-            bail!("select index {} out of range for axis {} (len {len})", s.index, s.axis);
+            bail!(
+                "select index {} out of range for axis {} (len {len})",
+                s.index,
+                s.axis
+            );
         }
         arr = arr.index_axis_move(Axis(s.axis), idx as usize);
     }
@@ -120,18 +156,28 @@ fn build<T: Elem>(
     let mut parts: Vec<(Option<String>, String, ArrayD<T>)> = Vec::new();
     if let Some(sp) = &v.split {
         if sp.axis >= arr.ndim() {
-            bail!("split axis {} out of range for shape {:?}", sp.axis, arr.shape());
+            bail!(
+                "split axis {} out of range for shape {:?}",
+                sp.axis,
+                arr.shape()
+            );
         }
         let len = arr.shape()[sp.axis];
         if len != sp.labels.len() {
             bail!(
                 "split axis {} has length {len} but {} labels were given (input shape {:?})",
-                sp.axis, sp.labels.len(), orig_shape
+                sp.axis,
+                sp.labels.len(),
+                orig_shape
             );
         }
         for (i, l) in sp.labels.iter().enumerate() {
             let long = sp.long_names.get(l).cloned().unwrap_or_else(|| l.clone());
-            parts.push((Some(l.clone()), long, arr.index_axis(Axis(sp.axis), i).to_owned()));
+            parts.push((
+                Some(l.clone()),
+                long,
+                arr.index_axis(Axis(sp.axis), i).to_owned(),
+            ));
         }
     } else {
         parts.push((None, String::new(), arr));
@@ -141,7 +187,11 @@ fn build<T: Elem>(
     for (label, long, mut a) in parts {
         if let Some(p) = &v.permute {
             if p.len() != a.ndim() {
-                bail!("permute has {} entries but array has {} axes", p.len(), a.ndim());
+                bail!(
+                    "permute has {} entries but array has {} axes",
+                    p.len(),
+                    a.ndim()
+                );
             }
             a = a.permuted_axes(IxDyn(p));
         }
@@ -149,7 +199,11 @@ fn build<T: Elem>(
             bail!(
                 "input shape {:?} -> {:?} after select/split has {} axes, \
                  but dims = {:?} lists {}. Adjust `select`, `split`, or `dims`.",
-                orig_shape, a.shape(), a.ndim(), v.dims, v.dims.len()
+                orig_shape,
+                a.shape(),
+                a.ndim(),
+                v.dims,
+                v.dims.len()
             );
         }
         let mut a = a.as_standard_layout().into_owned();
@@ -219,16 +273,27 @@ pub struct TemplateCache {
 
 impl TemplateCache {
     pub fn new(path: Option<PathBuf>) -> Self {
-        Self { path, cache: Mutex::new(HashMap::new()) }
+        Self {
+            path,
+            cache: Mutex::new(HashMap::new()),
+        }
     }
 
     pub fn get(&self, name: &str) -> Result<Option<CoordVar>> {
-        let Some(path) = &self.path else { return Ok(None) };
+        let Some(path) = &self.path else {
+            return Ok(None);
+        };
         if let Some(hit) = self.cache.lock().unwrap().get(name) {
             return Ok(hit.clone());
         }
-        let f = netcdf::open(path)
-            .with_context(|| format!("opening template {}", path.display()))?;
+        let _guard = NC_LOCK.lock(); // covers netcdf::open + the reads below
+                                     // Re-check: another thread may have populated the cache while we
+                                     // were waiting on the lock.
+        if let Some(hit) = self.cache.lock().unwrap().get(name) {
+            return Ok(hit.clone());
+        }
+        let f =
+            netcdf::open(path).with_context(|| format!("opening template {}", path.display()))?;
         let cv = match f.variable(name) {
             Some(var) if var.dimensions().len() == 1 => {
                 let values = var.get_values::<f64, _>(..)?;
@@ -242,7 +307,10 @@ impl TemplateCache {
             }
             _ => None,
         };
-        self.cache.lock().unwrap().insert(name.to_string(), cv.clone());
+        self.cache
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), cv.clone());
         Ok(cv)
     }
 }
@@ -255,7 +323,12 @@ fn time_coord(t: &TimeCfg, date: NaiveDate, n: usize) -> CoordVar {
             ("long_name".into(), "time".into()),
             (
                 "units".into(),
-                format!("{} since {} {}", t.unit, date.format("%Y-%m-%d"), t.start_time),
+                format!(
+                    "{} since {} {}",
+                    t.unit,
+                    date.format("%Y-%m-%d"),
+                    t.start_time
+                ),
             ),
             ("calendar".into(), t.calendar.clone()),
         ],
@@ -271,7 +344,9 @@ fn resolve_coord(
 ) -> Result<Option<CoordVar>> {
     if let Some(t) = &cfg.time {
         if t.dim == dim {
-            let d = sample.date.ok_or_else(|| anyhow!("no date for sample {}", sample.stem))?;
+            let d = sample
+                .date
+                .ok_or_else(|| anyhow!("no date for sample {}", sample.stem))?;
             return Ok(Some(time_coord(t, d, n)));
         }
     }
@@ -279,13 +354,17 @@ fn resolve_coord(
     let mut cv = match cc {
         Some(c) if c.start.is_some() || c.step.is_some() => {
             let (s, st) = (c.start.unwrap_or(0.0), c.step.unwrap_or(1.0));
-            Some(CoordVar { values: (0..n).map(|i| s + i as f64 * st).collect(), attrs: vec![] })
+            Some(CoordVar {
+                values: (0..n).map(|i| s + i as f64 * st).collect(),
+                attrs: vec![],
+            })
         }
-        Some(Coord { from_template: Some(name), .. }) => {
-            Some(tpl.get(name)?.ok_or_else(|| {
-                anyhow!("template has no 1-D variable '{name}' (needed for dim '{dim}')")
-            })?)
-        }
+        Some(Coord {
+            from_template: Some(name),
+            ..
+        }) => Some(tpl.get(name)?.ok_or_else(|| {
+            anyhow!("template has no 1-D variable '{name}' (needed for dim '{dim}')")
+        })?),
         _ => tpl.get(dim)?,
     };
     if let Some(c) = cv.as_mut() {
@@ -352,6 +431,10 @@ pub fn write(
     if out_path.exists() && !cfg.output.overwrite {
         bail!("{} exists (overwrite = false)", out_path.display());
     }
+    // Serialize the whole file lifetime (create -> write vars -> drop/close)
+    // against every other thread's netcdf/HDF5 calls, including the
+    // TemplateCache::get() call below (safe: NC_LOCK is reentrant).
+    let _guard = NC_LOCK.lock();
     let mut file = netcdf::create(out_path)?;
     for (n, l) in &dims {
         file.add_dimension(n, *l)?;
@@ -382,5 +465,7 @@ pub fn write(
 }
 
 pub fn out_path(cfg: &Config, sample: &Sample) -> PathBuf {
-    cfg.output.dir.join(subst(&cfg.output.pattern, &sample.kv()))
+    cfg.output
+        .dir
+        .join(subst(&cfg.output.pattern, &sample.kv()))
 }

@@ -13,6 +13,7 @@ cargo build --release          # binary: target/release/npy2nc
 # or, no system libs (needs cmake + C compiler; slower first build):
 cargo build --release --features static
 ```
+
 Requires Rust ≥ 1.80 (`rustup update`).
 
 ## Commands
@@ -35,17 +36,17 @@ Per sample (`stem`), each `[[variable]]` does:
 
 `load {stem}-file  →  select  →  split  →  permute  →  scale/offset  →  write`
 
-| Key | Meaning |
-|---|---|
-| `file` | path relative to `input.dir`; `{stem}` substituted |
-| `dims` | dim names of the array **after** select/split/permute |
-| `select = [{axis=0, index=0}]` | fix an axis (drops it). Negative index counts from end |
+| Key                                               | Meaning                                                                                                       |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `file`                                            | path relative to `input.dir`; `{stem}` substituted                                                            |
+| `dims`                                            | dim names of the array **after** select/split/permute                                                         |
+| `select = [{axis=0, index=0}]`                    | fix an axis (drops it). Negative index counts from end                                                        |
 | `[variable.split]` `axis`, `labels`, `long_names` | one npy axis → many variables. `name` must contain `{label}`; `units`/`long_name` may use `{label}`, `{long}` |
-| `permute = [1,0]` | reorder axes to match `dims` |
-| `scale`, `offset` | `x*scale+offset` (unit conversion) |
-| `dtype` | `"f32"` (default) or `"f64"` on output. Input dtype can be anything |
-| `optional = true` | skip if file is absent |
-| `attrs = {k = "v"}` | extra attributes |
+| `permute = [1,0]`                                 | reorder axes to match `dims`                                                                                  |
+| `scale`, `offset`                                 | `x*scale+offset` (unit conversion)                                                                            |
+| `dtype`                                           | `"f32"` (default) or `"f64"` on output. Input dtype can be anything                                           |
+| `optional = true`                                 | skip if file is absent                                                                                        |
+| `attrs = {k = "v"}`                               | extra attributes                                                                                              |
 
 Other sections: `[template]` (coords copied **by dim name** from any NetCDF, incl. their
 `units`/`long_name`), `[coords.<dim>]` (`from_template`, or `start`/`step`, plus `attrs`),
@@ -68,9 +69,13 @@ See `examples/multispecies_surface.toml` for a config that reproduces
 
 ## Notes / limitations
 
-- Samples are converted in parallel, but libnetcdf/HDF5 serialize their own calls behind a
-  global lock, so the win is in `.npy` decoding/reshaping, not in compression. If you're
-  compression-bound, lower `compression` (1–2 is much faster than 4–6).
+- Samples are converted in parallel, but every call into libnetcdf/HDF5 (opening the template,
+  creating a file, writing a variable) is funneled through one process-wide lock, because those
+  libraries aren't safe to call from multiple threads at once even with the `netcdf` crate's own
+  internal locking (see https://github.com/georust/netcdf/issues/43) — without this, concurrent
+  runs can fail every sample with a generic `NetCDF: HDF error`. `.npy` decoding/reshaping stays
+  fully parallel (that's the actual CPU cost), so `--jobs` still helps; if you're
+  write-bound, lower `compression` (1–2 is much faster than 4–6).
 - Supported `.npy` dtypes: f2/f4/f8, i1–i8, u1–u8, bool; either endianness; C or Fortran order.
   Not supported: `.npz`, structured/object arrays.
 - Time is written CF-style (`hours since YYYY-MM-DD 00:00:00`) rather than epoch-1970; xarray

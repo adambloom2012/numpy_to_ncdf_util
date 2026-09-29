@@ -1,73 +1,147 @@
-# Equivalent of numpy_to_netcdf.py --file_type multi_species (column + surface).
-#   npy2nc run -c examples/multispecies_surface.toml
+# Config for eval_edgar_vert_layer_<date> outputs: 7-species columns plus a
+# 5-level vertical breakdown (concentration / fraction / partial column),
+# and three level-only diagnostics (pbl_level, trop_level, region_thickness_m).
+#
+#   npy2nc run -c edgar_vert_layer.toml
+
 [input]
 dir = "/Volumes/External/data/pert_experiments/predictions_vertical_fractions"
-discover = "_pred.npy"
-exclude_suffixes = ["_surface_pred.npy"]      # *_surface_pred.npy also ends in _pred.npy
+# NB: "_partial_column_pred.npy" also ends with "_column_pred.npy", so it
+# would otherwise be picked up as a second, bogus sample -> exclude it.
+discover = "_column_pred.npy"
+exclude_suffixes = ["_partial_column_pred.npy"]
 
 [output]
-dir = "/Volumes/External/data/pert_experiments/predictions_vertical_fractions/predictions_vertical_fractions_netcdf"
+dir = "/Volumes/External/data/pert_experiments/predictions_vertical_fractions/netcdf"
 pattern = "{stem}.nc4"
 compression = 4
 
 [template]
-path = "/Users/adambloom/Downloads/GEOSChem.MetVars.20200305_0000z.nc4"   # lat/lon copied by name
+path = "/Users/adambloom/Downloads/GEOSChem.VCD.20200101_0000z.nc4"   # lat/lon copied by name
 
 [time]
-date_regex = '(\d{8})$'          # last 8 digits of the stem, e.g. standard_train_20190722
+date_regex = '(\d{8})$'          # last 8 digits of the stem, e.g. ..._20210319
 date_format = "%Y%m%d"
 unit = "hours"
 
+# The 5-entry vertical-region axis shared by concentration/fraction/partial_column
+# and region_thickness_m. No template variable for this, so it's generated.
+[coords.layer]
+start = 0
+step = 1
+attrs = { long_name = "vertical region index", units = "1" }
+
 [global_attrs]
-title = "DeepMMF multi-species VCD and surface predictions"
+title = "DeepMMF EDGAR vertical-layer predictions"
 date = "{date}"
 species = "NO2, O3, SO2, CO, CH2O, OH, ISOP"
 Conventions = "CF-1.8"
 
+# ---- (24, 7, 91, 144): total column, split into 7 species ----------------
+
 [[variable]]
-name = "{label}_VCD_pred"
+name = "{label}_column_pred"
 file = "{stem}_column_pred.npy"
 dims = ["time", "lat", "lon"]
 units = "molec cm-2"
-long_name = "Model predicted {long} vertical column density"
-optional = false
+long_name = "Model predicted {long} total vertical column density"
 [variable.split]
 axis = 1
 labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
 long_names = { NO2 = "nitrogen dioxide", O3 = "ozone", SO2 = "sulfur dioxide", CO = "carbon monoxide", CH2O = "formaldehyde", OH = "hydroxyl radical", ISOP = "isoprene" }
 
 [[variable]]
-name = "{label}_VCD_target"
-file = "{stem}_target.npy"
+name = "{label}_column_target"
+file = "{stem}_column_target.npy"
 dims = ["time", "lat", "lon"]
 units = "molec cm-2"
-long_name = "GEOS-Chem simulated {long} vertical column density"
-optional = false
+long_name = "GEOS-Chem simulated {long} total vertical column density"
 [variable.split]
 axis = 1
 labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
-long_names = { NO2 = "nitrogen dioxide", O3 = "ozone", SO2 = "sulfur dioxide", CO = "carbon monoxide", CH2O = "formaldehyde", OH = "hydroxyl radical", ISOP = "isoprene" }
+
+# ---- (24, 7, 5, 91, 144): per-species x per-layer fields ------------------
+# split (axis=1) removes the species axis -> (24, 5, 91, 144) -> dims below
 
 [[variable]]
-name = "{label}_SURFACE_pred"
-file = "{stem}_surface_pred.npy"
-dims = ["time", "lat", "lon"]
+name = "{label}_concentration_pred"
+file = "{stem}_concentration_pred.npy"
+dims = ["time", "layer", "lat", "lon"]
 units = "molec cm-3"
-long_name = "Model predicted {long} surface-layer concentration"
-optional = true
+long_name = "Model predicted {long} concentration by vertical region"
 [variable.split]
 axis = 1
 labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
-long_names = { NO2 = "nitrogen dioxide", O3 = "ozone", SO2 = "sulfur dioxide", CO = "carbon monoxide", CH2O = "formaldehyde", OH = "hydroxyl radical", ISOP = "isoprene" }
 
 [[variable]]
-name = "{label}_SURFACE_target"
-file = "{stem}_surface_target.npy"
-dims = ["time", "lat", "lon"]
+name = "{label}_concentration_target"
+file = "{stem}_concentration_target.npy"
+dims = ["time", "layer", "lat", "lon"]
 units = "molec cm-3"
-long_name = "GEOS-Chem simulated {long} surface-layer concentration"
-optional = true
+long_name = "GEOS-Chem simulated {long} concentration by vertical region"
 [variable.split]
 axis = 1
 labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
-long_names = { NO2 = "nitrogen dioxide", O3 = "ozone", SO2 = "sulfur dioxide", CO = "carbon monoxide", CH2O = "formaldehyde", OH = "hydroxyl radical", ISOP = "isoprene" }
+
+[[variable]]
+name = "{label}_fraction_pred"
+file = "{stem}_fraction_pred.npy"
+dims = ["time", "layer", "lat", "lon"]
+units = "1"
+long_name = "Model predicted fraction of {long} column in each vertical region"
+[variable.split]
+axis = 1
+labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
+
+[[variable]]
+name = "{label}_fraction_target"
+file = "{stem}_fraction_target.npy"
+dims = ["time", "layer", "lat", "lon"]
+units = "1"
+long_name = "GEOS-Chem simulated fraction of {long} column in each vertical region"
+[variable.split]
+axis = 1
+labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
+
+[[variable]]
+name = "{label}_partial_column_pred"
+file = "{stem}_partial_column_pred.npy"
+dims = ["time", "layer", "lat", "lon"]
+units = "molec cm-2"
+long_name = "Model predicted {long} partial column by vertical region"
+[variable.split]
+axis = 1
+labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
+
+[[variable]]
+name = "{label}_partial_column_target"
+file = "{stem}_partial_column_target.npy"
+dims = ["time", "layer", "lat", "lon"]
+units = "molec cm-2"
+long_name = "GEOS-Chem simulated {long} partial column by vertical region"
+[variable.split]
+axis = 1
+labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
+
+# ---- level / thickness diagnostics, no species split ----------------------
+
+[[variable]]
+name = "pbl_level"
+file = "{stem}_pbl_level.npy"
+dims = ["time", "lat", "lon"]
+units = "1"
+long_name = "Planetary boundary layer top, model level index"
+
+[[variable]]
+name = "trop_level"
+file = "{stem}_trop_level.npy"
+dims = ["time", "lat", "lon"]
+units = "1"
+long_name = "Tropopause, model level index"
+
+[[variable]]
+name = "region_thickness_m"
+file = "{stem}_region_thickness_m.npy"
+dims = ["time", "layer", "lat", "lon"]
+units = "m"
+long_name = "Thickness of each vertical region"
