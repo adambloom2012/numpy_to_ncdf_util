@@ -1,0 +1,73 @@
+# Equivalent of numpy_to_netcdf.py --file_type multi_species (column + surface).
+#   npy2nc run -c examples/multispecies_surface.toml
+[input]
+dir = "/Volumes/External/data/pert_experiments/predictions_vertical_fractions"
+discover = "_pred.npy"
+exclude_suffixes = ["_surface_pred.npy"]      # *_surface_pred.npy also ends in _pred.npy
+
+[output]
+dir = "/Volumes/External/data/pert_experiments/predictions_vertical_fractions/predictions_vertical_fractions_netcdf"
+pattern = "{stem}.nc4"
+compression = 4
+
+[template]
+path = "/Users/adambloom/Downloads/GEOSChem.MetVars.20200305_0000z.nc4"   # lat/lon copied by name
+
+[time]
+date_regex = '(\d{8})$'          # last 8 digits of the stem, e.g. standard_train_20190722
+date_format = "%Y%m%d"
+unit = "hours"
+
+[global_attrs]
+title = "DeepMMF multi-species VCD and surface predictions"
+date = "{date}"
+species = "NO2, O3, SO2, CO, CH2O, OH, ISOP"
+Conventions = "CF-1.8"
+
+[[variable]]
+name = "{label}_VCD_pred"
+file = "{stem}_column_pred.npy"
+dims = ["time", "lat", "lon"]
+units = "molec cm-2"
+long_name = "Model predicted {long} vertical column density"
+optional = false
+[variable.split]
+axis = 1
+labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
+long_names = { NO2 = "nitrogen dioxide", O3 = "ozone", SO2 = "sulfur dioxide", CO = "carbon monoxide", CH2O = "formaldehyde", OH = "hydroxyl radical", ISOP = "isoprene" }
+
+[[variable]]
+name = "{label}_VCD_target"
+file = "{stem}_target.npy"
+dims = ["time", "lat", "lon"]
+units = "molec cm-2"
+long_name = "GEOS-Chem simulated {long} vertical column density"
+optional = false
+[variable.split]
+axis = 1
+labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
+long_names = { NO2 = "nitrogen dioxide", O3 = "ozone", SO2 = "sulfur dioxide", CO = "carbon monoxide", CH2O = "formaldehyde", OH = "hydroxyl radical", ISOP = "isoprene" }
+
+[[variable]]
+name = "{label}_SURFACE_pred"
+file = "{stem}_surface_pred.npy"
+dims = ["time", "lat", "lon"]
+units = "molec cm-3"
+long_name = "Model predicted {long} surface-layer concentration"
+optional = true
+[variable.split]
+axis = 1
+labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
+long_names = { NO2 = "nitrogen dioxide", O3 = "ozone", SO2 = "sulfur dioxide", CO = "carbon monoxide", CH2O = "formaldehyde", OH = "hydroxyl radical", ISOP = "isoprene" }
+
+[[variable]]
+name = "{label}_SURFACE_target"
+file = "{stem}_surface_target.npy"
+dims = ["time", "lat", "lon"]
+units = "molec cm-3"
+long_name = "GEOS-Chem simulated {long} surface-layer concentration"
+optional = true
+[variable.split]
+axis = 1
+labels = ["NO2", "O3", "SO2", "CO", "CH2O", "OH", "ISOP"]
+long_names = { NO2 = "nitrogen dioxide", O3 = "ozone", SO2 = "sulfur dioxide", CO = "carbon monoxide", CH2O = "formaldehyde", OH = "hydroxyl radical", ISOP = "isoprene" }
