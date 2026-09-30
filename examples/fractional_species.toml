@@ -5,19 +5,19 @@
 #   npy2nc run -c edgar_vert_layer.toml
 
 [input]
-dir = "/Volumes/External/data/pert_experiments/predictions_vertical_fractions"
+dir = "/mnt/c/Users/abloom/Desktop/data/Playground/test_util"
 # NB: "_partial_column_pred.npy" also ends with "_column_pred.npy", so it
 # would otherwise be picked up as a second, bogus sample -> exclude it.
 discover = "_column_pred.npy"
 exclude_suffixes = ["_partial_column_pred.npy"]
 
 [output]
-dir = "/Volumes/External/data/pert_experiments/predictions_vertical_fractions/netcdf"
+dir = "/mnt/c/Users/abloom/Desktop/data/Playground/test_util/netcdf"
 pattern = "{stem}.nc4"
 compression = 4
 
 [template]
-path = "/Users/adambloom/Downloads/GEOSChem.VCD.20200101_0000z.nc4"   # lat/lon copied by name
+path = "/mnt/c/Users/abloom/Desktop/data/Playground/GEOSChem.VCD.20200407_0000z.nc4"   # lat/lon copied by name
 
 [time]
 date_regex = '(\d{8})$'          # last 8 digits of the stem, e.g. ..._20210319
